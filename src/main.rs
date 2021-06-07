@@ -6,8 +6,8 @@ use expr::{WithPos, Error, ErrorKind::*};
 
 fn print_errmsg_at(s :&str, start :usize, end :usize, msg :&str) {
   println!("\x1b[31;1merror\x1b[0m[{}-{}]: {}", start, end, msg);
-  println!("\x1b[34mline|\x1b[0m   {}", s);
-  // TODO color the error range
+  println!("\x1b[34mline|\x1b[0m   {}\x1b[43;30m{}\x1b[0m{}",
+     &s[0..start], &s[start..end+1], &s[end+1..]);
   println!("\x1b[34m    |\x1b[0m   {}{}", " ".repeat(start), "^".repeat(end-start+1));
 }
 
@@ -24,6 +24,7 @@ fn print_error(s :&str, WithPos {start, end1, val:e} :Error) {
     // LexError
     UnknownOperator => print_errmsg_at(s, start, end,
       "unknown operator. currently supported operators are '+', '-', '*', '/'"),
+    UnknownToken => print_errmsg_at(s, start, end, "unknown token"),
     InvalidNum => print_errmsg_at(s, start, end,
       "invalid number representation"),
 
@@ -41,27 +42,36 @@ fn print_error(s :&str, WithPos {start, end1, val:e} :Error) {
     UnpairedParenthesis => print_errmsg_at(s, start, end,
       "parenthesis unmatched"),
   };
-
-}
-
-fn eval_print(s :&str) {
-  match expr::process_a_line(s) {
-    Ok(x) => println!("{}", x),
-    Err(e) => print_error(s, e),
-  };
 }
 
 fn main() {
   let s :&str = "x00FF + 2 + mo1 / 2";
   let s :&str = "(x00FF + 2 + mo1) / 2";
 
-  let ss = match std::env::args().nth(1) {
-    None => {
-      println!("program needs 1 argument");
-      return;
+  match std::env::args().nth(1) {
+    None => println!("program needs at least 1 argument"),
+    Some(s) if s == "-c" => {
+      let s :String = std::env::args().skip(2).collect();
+      match expr::process_a_line(&s) {
+        Ok(x) => println!("{}", x),
+        Err(e) => print_error(&s, e),
+      };
     },
-    Some(s) => s,
-  };
+    Some(s) if s == "-i" => {
+      loop {
+        print!("> ");
+        let mut s = String::new();
+        let succ = std::io::stdin().read_line(&mut s);
+        if succ.is_err() { println!("io error: {:?}", succ); break; } 
+        if succ.ok() == Some(0) { println!(""); break; } // at EOF, ctrl-D
 
-  eval_print(&ss);
+        match expr::process_a_line(&s) {
+          Ok(x) => println!("{}", x),
+          Err(e) if e.val == EmptyExpr => println!("empty {:?} {:?}", e, s),
+          Err(e) => print_error(&s[0..s.len()-1], e), // trim newline
+        };
+      }
+    },
+    Some(s) => println!("unrecognized option {}",  s),
+  };
 }

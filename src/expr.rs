@@ -38,10 +38,11 @@ impl<T> PartialOrd for WithPos<T> where T :PartialOrd {
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ErrorKind {
   // LexError
   UnknownOperator,
+  UnknownToken,
   InvalidNum,
 
   // EvalError
@@ -76,6 +77,7 @@ enum TokenKernel<'a> {
   Operator(&'a str),
   Number(bool, u32, &'a str), // (is_negative, radix, num)
   Parenthesis(bool), // is opening paren??
+  Unknown,
 }
 use TokenKernel::*;
 type Token<'a> = WithPos<TokenKernel<'a>>;
@@ -106,11 +108,12 @@ impl<'a> Iterator for Tokenizer<'a> {
 
     // skip white spaces
     self.at += RE_SPS.find(&self.buf[self.at..]).unwrap().end();
+    if self.at == self.buf.len() { return None; }
 
     // starting position of this token
     let start = self.at;
 
-    let oval =
+    let (len, val) =
     if let Some(cap) = RE_NUM.captures(&self.buf[self.at..]) {
       let sign = ! cap.get(1).is_some();
       let radix = match cap.get(2).map(|m| m.as_str()) {
@@ -124,24 +127,22 @@ impl<'a> Iterator for Tokenizer<'a> {
       let digits = cap.get(3)?.as_str();
 
       let len = cap.get(0).unwrap().end();
-      Some((len, Number(sign, radix, digits)))
+      (len, Number(sign, radix, digits))
 
     } else if let Some(mat) = RE_OP.find(&self.buf[self.at..]) {
       let len = mat.end();
-      Some((len, Operator(&self.buf[self.at..self.at+len])))
+      (len, Operator(&self.buf[self.at..self.at+len]))
 
     } else if self.buf.get(self.at..=self.at) == Some("(") {
-      Some((1, Parenthesis(true)))
+      (1, Parenthesis(true))
 
     } else if self.buf.get(self.at..=self.at) == Some(")") {
-      Some((1, Parenthesis(false)))
+      (1, Parenthesis(false))
 
-    } else {None};
+    } else {(1, Unknown)};
 
-    oval.map(|(len, val)| {
-      self.at += len;
-      WithPos { start, end1:self.at, val }
-    })
+    self.at += len;
+    Some(WithPos { start, end1:self.at, val })
   }
 }
 
@@ -196,6 +197,7 @@ fn lexer(tok :TokenKernel) -> Result<LexKernel,ErrorKind> {
       }
     },
     TokenKernel::Parenthesis(b) => Ok(LexKernel::Paren(b)),
+    TokenKernel::Unknown => Err(UnknownToken),
   }
 }
 
