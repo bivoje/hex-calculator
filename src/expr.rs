@@ -1,9 +1,9 @@
 
 #[derive(Debug)]
 pub struct WithPos<T> {
-  // [start, end)
+  // [start, end1)
   pub start :usize,
-  pub end :usize,
+  pub end1 :usize,
   pub val :T,
 }
 
@@ -11,7 +11,7 @@ impl<T> WithPos<T> {
   fn map<U,F>(self, f :F) -> WithPos<U> where F :FnOnce(T) -> U {
     WithPos {
       start: self.start,
-      end: self.end,
+      end1: self.end1,
       val: f(self.val),
     }
   }
@@ -19,8 +19,8 @@ impl<T> WithPos<T> {
   fn map2<U,R,F>(self, f :F) -> Result<WithPos<U>,WithPos<R>>
   where F :FnOnce(T) -> Result<U,R> {
     match f(self.val) {
-      Ok(u)  =>  Ok(WithPos {start:self.start, end:self.end, val:u}),
-      Err(r) => Err(WithPos {start:self.start, end:self.end, val:r}),
+      Ok(u)  =>  Ok(WithPos {start:self.start, end1:self.end1, val:u}),
+      Err(r) => Err(WithPos {start:self.start, end1:self.end1, val:r}),
     }
   }
 }
@@ -44,29 +44,30 @@ pub enum ErrorKind {
   UnknownOperator,
   InvalidNum,
 
-  // ParseError
-  UnpairedParenthesis,
-
   // EvalError
-  NotEnoughOperand,
   DivisionByZero, 
   DivRem(i64, i64),
 
-  // OverallError
+  // Malformed Expression
   EmptyExpr,
-  MalformedExpr,
+  UnpairedParenthesis,
+  NotEnoughOperator,
+  NotEnoughOperand,
 }
 use ErrorKind::*;
-type Error = WithPos<ErrorKind>;
+pub type Error = WithPos<ErrorKind>;
 
+// for whatever the T is, creates an 'Error' of given 'kind' at
+// position indicated by 'wpl'
 fn error<T,U>(wpl :&WithPos<T>, kind :ErrorKind)
 -> Result<U,Error> {
-  error_at(wpl.start, wpl.end, kind)
+  error_at(wpl.start, wpl.end1, kind)
 }
 
-fn error_at<U>(start :usize, end :usize, kind :ErrorKind)
+// creates 'Error' of 'kind' at given position
+fn error_at<U>(start :usize, end1 :usize, kind :ErrorKind)
 -> Result<U,Error> {
-  Err(WithPos { start, end, val: kind })
+  Err(WithPos { start, end1, val: kind })
 }
 
 
@@ -139,7 +140,7 @@ impl<'a> Iterator for Tokenizer<'a> {
 
     oval.map(|(len, val)| {
       self.at += len;
-      WithPos { start, end:self.at, val }
+      WithPos { start, end1:self.at, val }
     })
   }
 }
@@ -270,7 +271,7 @@ fn evaluate(ls :Vec<Lex>) -> Result<i64,Error> {
   match (stack.pop(), stack.pop()) {
     (None,    None) => error_at(0, 0, EmptyExpr),
     (Some(a), None) => Ok(a),
-    (Some(_), Some(_)) | _ => error_at(0, 0, MalformedExpr),
+    (Some(_), Some(_)) | _ => error_at(0, 0, NotEnoughOperator),
   }
 }
 
