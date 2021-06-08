@@ -72,10 +72,10 @@ fn error_at<U>(start :usize, end1 :usize, kind :ErrorKind)
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 enum TokenKernel<'a> {
   Operator(&'a str),
-  Number(bool, u32, &'a str), // (is_negative, radix, num)
+  Number(bool, u32, &'a str), // (is_positive, radix, num)
   Parenthesis(bool), // is opening paren??
   Unknown,
 }
@@ -104,6 +104,7 @@ impl<'a> Iterator for Tokenizer<'a> {
       "#).unwrap();
       static ref RE_PRN :Regex = Regex::new(r#"^\(|\)"#).unwrap();
       static ref RE_SPS :Regex = Regex::new(r#"^\s*"#).unwrap();
+      //TODO static ref RE_CMT :Regex = Regex::new(r#
     }
 
     // skip white spaces
@@ -150,6 +151,51 @@ fn tokenize<'a>(buf :&'a str) -> Tokenizer<'a> {
   Tokenizer {buf, at:0}
 }
 
+#[test]
+fn test_tokenizer_basic_parasing() {
+  let mut t = tokenize("  \t0 mx78AD+");
+  assert_eq!(t.next().unwrap().val, Number(true, 10, "0"));
+  assert_eq!(t.next().unwrap().val, Number(false, 16, "78AD"));
+  assert_eq!(t.next().unwrap().val, Operator("+"));
+  assert_eq!(t.next(), None);
+}
+
+#[test]
+fn test_tokenizer_operator_exception() {
+  let x :Option<u32> = None;
+  let mut t = tokenize("/(/1@+])^,$");
+  assert_eq!(t.next().unwrap().val, Operator("/"));
+  assert_eq!(t.next().unwrap().val, Parenthesis(true));
+  assert_eq!(t.next().unwrap().val, Operator("/"));
+  assert_eq!(t.next().unwrap().val, Number(true, 10, "1"));
+  assert_eq!(t.next().unwrap().val, Operator("@+]"));
+  assert_eq!(t.next().unwrap().val, Parenthesis(false));
+  assert_eq!(t.next().unwrap().val, Operator("^,$"));
+  assert_eq!(t.next(), None);
+}
+
+#[test]
+fn test_tokenizer_numeric_bases() {
+  let mut t = tokenize("bABxABmb11o11md11+m77");
+  assert_eq!(t.next().unwrap().val, Number(true, 2, "AB"));
+  assert_eq!(t.next().unwrap().val, Number(true, 16, "AB"));
+  assert_eq!(t.next().unwrap().val, Number(false, 2, "11"));
+  assert_eq!(t.next().unwrap().val, Number(true, 8, "11"));
+  assert_eq!(t.next().unwrap().val, Number(false, 10, "11"));
+  assert_eq!(t.next().unwrap().val, Operator("+"));
+  assert_eq!(t.next().unwrap().val, Number(false, 10, "77"));
+  assert_eq!(t.next(), None);
+}
+
+fn test_tokenizer_ignore_whitespaces() {
+  // TODO test on various wsps characters?
+  assert_eq!(
+    tokenize("3+4+5+7+8").collect::<Vec<_>>(),
+    tokenize("\t3 +    4 + \t5 + 7 \t+ 8   ").collect::<Vec<_>>());
+  assert_eq!(
+    tokenize("3*97-m3//(*b077073+++47___xFFE").collect::<Vec<_>>(),
+    tokenize("3  * 97- m3 // (* b077073 +++47 ___ xFFE").collect::<Vec<_>>());
+}
 
 #[derive(Debug, PartialEq, Eq)]
 enum LexKernel {
@@ -201,6 +247,28 @@ fn lexer(tok :TokenKernel) -> Result<LexKernel,ErrorKind> {
   }
 }
 
+#[test]
+fn test_lexer_numeric_base() {
+  assert_eq!(lexer(Number(true, 2, "AB")), Err(InvalidNum));
+  assert_eq!(lexer(Number(true, 16, "AB")), Ok(Num(171)));
+  assert_eq!(lexer(Number(false, 2, "11")), Ok(Num(-3)));
+  assert_eq!(lexer(Number(true, 8, "11")), Ok(Num(9)));
+  assert_eq!(lexer(Number(false, 10, "11")), Ok(Num(-11)));
+  assert_eq!(lexer(Operator("+")), Ok(Op(Add)));
+  assert_eq!(lexer(Number(false, 10, "77")), Ok(Num(-77)));
+  assert_eq!(lexer(Number(false, 9, "77")), Ok(Num(-70)));
+  assert_eq!(lexer(Number(true, 4, "13")), Ok(Num(7)));
+  assert_eq!(lexer(Number(true, 4, "14")), Err(InvalidNum));
+  // TODO shouldn't buffer overflow treated separately?
+  assert_eq!(lexer(Number(true, 16, "F_FFFF_FFFF_FFFF_FFFF_FFFF_FFFFF_FFFF_FFFF")), Err(InvalidNum));
+}
+
+#[test]
+fn test_lexer_unknown_token() {
+  assert_eq!(lexer(Unknown), Err(UnknownToken));
+  assert_eq!(lexer(Operator("**")), Err(UnknownOperator));
+  assert_eq!(lexer(Operator("+*+")), Err(UnknownOperator));
+}
 
 fn pop_while<F,T>(d :&mut Vec<T>, v :&mut Vec<T>, f :F)
 where F :Fn(&T)->bool {
@@ -235,6 +303,190 @@ fn reverse_polish(ls :Vec<Lex>)
   Ok(ret)
 }
 
+#[test]
+fn test_reverse_polish_assoc_ltor() {
+  assert_eq!(reverse_polish(vec![ // "mx3 + d84 + b001011 + 734"
+    WithPos { start: 0, end1: 3, val: Num(-3) },
+    WithPos { start: 4, end1: 5, val: Op(Add) },
+    WithPos { start: 6, end1: 9, val: Num(84) },
+    WithPos { start: 10, end1: 11, val: Op(Add) },
+    WithPos { start: 12, end1: 19, val: Num(11) },
+    WithPos { start: 20, end1: 21, val: Op(Add) },
+    WithPos { start: 22, end1: 25, val: Num(734) }
+  ]), Ok(vec![ // mx3 d84 + b001011 + 734 +
+    WithPos { start: 0, end1: 3, val: Num(-3) },
+    WithPos { start: 6, end1: 9, val: Num(84) },
+    WithPos { start: 4, end1: 5, val: Op(Add) },
+    WithPos { start: 12, end1: 19, val: Num(11) },
+    WithPos { start: 10, end1: 11, val: Op(Add) },
+    WithPos { start: 22, end1: 25, val: Num(734) },
+    WithPos { start: 20, end1: 21, val: Op(Add) },
+  ]));
+
+  assert_eq!(reverse_polish(vec![ // "mx3 * d84 * b001011 * 734"
+    WithPos { start: 0, end1: 3, val: Num(-3) },
+    WithPos { start: 4, end1: 5, val: Op(Mul) },
+    WithPos { start: 6, end1: 9, val: Num(84) },
+    WithPos { start: 10, end1: 11, val: Op(Mul) },
+    WithPos { start: 12, end1: 19, val: Num(11) },
+    WithPos { start: 20, end1: 21, val: Op(Mul) },
+    WithPos { start: 22, end1: 25, val: Num(734) }
+  ]), Ok(vec![ // mx3 d84 + b001011 + 734 +
+    WithPos { start: 0, end1: 3, val: Num(-3) },
+    WithPos { start: 6, end1: 9, val: Num(84) },
+    WithPos { start: 4, end1: 5, val: Op(Mul) },
+    WithPos { start: 12, end1: 19, val: Num(11) },
+    WithPos { start: 10, end1: 11, val: Op(Mul) },
+    WithPos { start: 22, end1: 25, val: Num(734) },
+    WithPos { start: 20, end1: 21, val: Op(Mul) },
+  ]));
+}
+
+#[test]
+fn test_reverse_polish_op_prec() {
+  assert_eq!(reverse_polish(vec![ // "mx3 * d84 + b001011 - 734"
+    WithPos { start: 0, end1: 3, val: Num(-3) },
+    WithPos { start: 4, end1: 5, val: Op(Mul) },
+    WithPos { start: 6, end1: 9, val: Num(84) },
+    WithPos { start: 10, end1: 11, val: Op(Add) },
+    WithPos { start: 12, end1: 19, val: Num(11) },
+    WithPos { start: 20, end1: 21, val: Op(Sub) },
+    WithPos { start: 22, end1: 25, val: Num(734) },
+  ]), Ok(vec![ // mx3 d84 * b001011 734 - +
+    WithPos { start: 0, end1: 3, val: Num(-3) },
+    WithPos { start: 6, end1: 9, val: Num(84) },
+    WithPos { start: 4, end1: 5, val: Op(Mul) },
+    WithPos { start: 12, end1: 19, val: Num(11) },
+    WithPos { start: 22, end1: 25, val: Num(734) },
+    WithPos { start: 20, end1: 21, val: Op(Sub) },
+    WithPos { start: 10, end1: 11, val: Op(Add) },
+  ]));
+
+  assert_eq!(reverse_polish(vec![ // "mx3 + d84 / b001011 * 734"
+    WithPos { start: 0, end1: 3, val: Num(-3) },
+    WithPos { start: 4, end1: 5, val: Op(Add) },
+    WithPos { start: 6, end1: 9, val: Num(84) },
+    WithPos { start: 10, end1: 11, val: Op(Div) },
+    WithPos { start: 12, end1: 19, val: Num(11) },
+    WithPos { start: 20, end1: 21, val: Op(Mul) },
+    WithPos { start: 22, end1: 25, val: Num(734) },
+  ]), Ok(vec![ // mx3 d84 b001011 / 734 * +
+    WithPos { start: 0, end1: 3, val: Num(-3) },
+    WithPos { start: 6, end1: 9, val: Num(84) },
+    WithPos { start: 12, end1: 19, val: Num(11) },
+    WithPos { start: 4, end1: 5, val: Op(Div) },
+    WithPos { start: 22, end1: 25, val: Num(734) },
+    WithPos { start: 20, end1: 21, val: Op(Mul) },
+    WithPos { start: 10, end1: 11, val: Op(Add) },
+  ]));
+}
+
+#[test]
+fn test_reverse_polish_paren_pairing() {
+  assert_eq!(reverse_polish(vec![
+    // "() 3 - () 7 () " empty parenthesis pair is simply ignored
+    WithPos { start: 0, end1: 1, val: Paren(true) },
+    WithPos { start: 1, end1: 2, val: Paren(false) },
+    WithPos { start: 3, end1: 4, val: Num(3) },
+    WithPos { start: 5, end1: 6, val: Op(Sub) },
+    WithPos { start: 7, end1: 8, val: Paren(true) },
+    WithPos { start: 8, end1: 9, val: Paren(false) },
+    WithPos { start: 10, end1: 11, val: Num(7) },
+    WithPos { start: 12, end1: 13, val: Paren(true) },
+    WithPos { start: 13, end1: 14, val: Paren(false) },
+  ]), Ok(vec![ // 3 - 7
+    WithPos { start: 3, end1: 4, val: Num(3) },
+    WithPos { start: 10, end1: 11, val: Num(7) },
+    WithPos { start: 5, end1: 6, val: Op(Sub) },
+  ]));
+
+  assert_eq!(reverse_polish(vec![
+    // "((mx3) * ((d84) + b001011)) - 734"
+    WithPos { start: 0, end1: 1, val: Paren(true) },
+    WithPos { start: 1, end1: 2, val: Paren(true) },
+    WithPos { start: 2, end1: 5, val: Num(-3) },
+    WithPos { start: 5, end1: 6, val: Paren(false) },
+    WithPos { start: 7, end1: 8, val: Op(Mul) },
+    WithPos { start: 9, end1: 10, val: Paren(true) },
+    WithPos { start: 10, end1: 11, val: Paren(true) },
+    WithPos { start: 11, end1: 14, val: Num(84) },
+    WithPos { start: 14, end1: 15, val: Paren(false) },
+    WithPos { start: 16, end1: 17, val: Op(Add) },
+    WithPos { start: 18, end1: 25, val: Num(11) },
+    WithPos { start: 25, end1: 26, val: Paren(false) },
+    WithPos { start: 26, end1: 27, val: Paren(false) },
+    WithPos { start: 28, end1: 29, val: Op(Sub) },
+    WithPos { start: 30, end1: 33, val: Num(734) },
+  ]), Ok(vec![ // mx3 d84 b001011 + * 734 -
+    WithPos { start: 2, end1: 5, val: Num(-3) },
+    WithPos { start: 11, end1: 14, val: Num(84) },
+    WithPos { start: 18, end1: 25, val: Num(11) },
+    WithPos { start: 16, end1: 17, val: Op(Add) },
+    WithPos { start: 7, end1: 8, val: Op(Mul) },
+    WithPos { start: 30, end1: 33, val: Num(734) },
+    WithPos { start: 28, end1: 29, val: Op(Sub) },
+  ]));
+}
+
+#[test]
+fn test_reverse_polish_paren_prec() {
+  assert_eq!(reverse_polish(vec![ // "mx3 * (d84 + b001011) - 734"
+    WithPos { start: 0, end1: 3, val: Num(-3) },
+    WithPos { start: 4, end1: 5, val: Op(Mul) },
+    WithPos { start: 6, end1: 7, val: Paren(true) },
+    WithPos { start: 7, end1: 10, val: Num(84) },
+    WithPos { start: 11, end1: 12, val: Op(Add) },
+    WithPos { start: 13, end1: 20, val: Num(11) },
+    WithPos { start: 20, end1: 21, val: Paren(false) },
+    WithPos { start: 22, end1: 23, val: Op(Sub) },
+    WithPos { start: 24, end1: 27, val: Num(734) },
+  ]), Ok(vec![ // mx3 d84 b001011 + * 734 -
+    WithPos { start: 0, end1: 3, val: Num(-3) },
+    WithPos { start: 7, end1: 10, val: Num(84) },
+    WithPos { start: 13, end1: 20, val: Num(11) },
+    WithPos { start: 11, end1: 12, val: Op(Add) },
+    WithPos { start: 4, end1: 5, val: Op(Mul) },
+    WithPos { start: 24, end1: 27, val: Num(734) },
+    WithPos { start: 22, end1: 23, val: Op(Sub) },
+  ]));
+}
+
+#[test]
+fn test_reverse_polish_unpaired_paren() {
+  assert_eq!(reverse_polish(vec![
+    WithPos { start: 0, end1:1, val: Paren(true) },
+  ]), Err(WithPos {start: 0, end1: 1, val: UnpairedParenthesis}));
+
+  assert_eq!(reverse_polish(vec![
+    WithPos { start: 0, end1:1, val: Paren(false) },
+  ]), Err(WithPos {start: 0, end1: 1, val: UnpairedParenthesis}));
+
+  assert_eq!(reverse_polish(vec![ // 3+(1+(2*1)
+    WithPos { start: 0, end1: 1, val: Num(3) },
+    WithPos { start: 1, end1: 2, val: Op(Add) },
+    WithPos { start: 2, end1: 3, val: Paren(true) },
+    WithPos { start: 3, end1: 4, val: Num(1) },
+    WithPos { start: 4, end1: 5, val: Op(Add) },
+    WithPos { start: 5, end1: 6, val: Paren(true) },
+    WithPos { start: 6, end1: 7, val: Num(2) },
+    WithPos { start: 7, end1: 8, val: Op(Mul) },
+    WithPos { start: 8, end1: 9, val: Num(1) },
+    WithPos { start: 9, end1: 10, val: Paren(false) },
+  ]), Err(WithPos {start: 2, end1: 3, val: UnpairedParenthesis}));
+
+  assert_eq!(reverse_polish(vec![ // (1*2)+1)+3
+    WithPos { start: 9, end1: 10, val: Paren(false) },
+    WithPos { start: 8, end1: 9, val: Num(1) },
+    WithPos { start: 7, end1: 8, val: Op(Mul) },
+    WithPos { start: 6, end1: 7, val: Num(2) },
+    WithPos { start: 5, end1: 6, val: Paren(true) },
+    WithPos { start: 4, end1: 5, val: Op(Add) },
+    WithPos { start: 3, end1: 4, val: Num(1) },
+    WithPos { start: 1, end1: 2, val: Op(Add) },
+    WithPos { start: 2, end1: 3, val: Paren(true) },
+    WithPos { start: 0, end1: 1, val: Num(3) },
+  ]), Err(WithPos {start: 7, end1: 8, val: UnpairedParenthesis}));
+}
 
 fn evaluate(ls :Vec<Lex>) -> Result<i64,Error> {
   let mut stack = Vec::new();
@@ -277,6 +529,64 @@ fn evaluate(ls :Vec<Lex>) -> Result<i64,Error> {
   }
 }
 
+#[test]
+fn test_evaluate() {
+  let wp = |x :LexKernel| WithPos {start:0, end1:0, val:x};
+
+  assert_eq!(evaluate(vec![ // mx3 d84 + b001011 + 734 +
+    wp(Num(-3)), wp(Num(84)), wp(Op(Add)), wp(Num(11)),
+    wp(Op(Add)), wp(Num(734)), wp(Op(Add)),
+  ]), Ok(826));
+
+  assert_eq!(evaluate(vec![ // "mx3 * d84 * b001011 * 734"
+    wp(Num(-3)), wp(Num(84)), wp(Op(Mul)), wp(Num(11)),
+    wp(Op(Mul)), wp(Num(734)), wp(Op(Mul)),
+  ]), Ok(-2034648));
+
+  assert_eq!(evaluate(vec![ // "mx3 d84 * b001011 734 - +"
+    wp(Num(-3)), wp(Num(84)), wp(Op(Mul)), wp(Num(11)),
+    wp(Num(734)), wp(Op(Sub)), wp(Op(Add)),
+  ]), Ok(-975));
+
+  assert_eq!(evaluate(vec![ // mx3 d84 b001011 / 734 * +
+    wp(Num(-3)), wp(Num(84)), wp(Num(11)), wp(Op(Add)),
+    wp(Op(Mul)), wp(Num(734)), wp(Op(Sub)),
+  ]), Ok(-1019));
+
+  // TODO more complex expressions?
+}
+
+#[test]
+fn test_eval_malformed_expr() {
+  // TODO is this really effectful?
+  let wp = |x :LexKernel| WithPos {start:0, end1:0, val:x};
+  let wp1 = |x :ErrorKind| WithPos {start:0, end1:0, val:x};
+  assert_eq!(evaluate(vec![ // mx3 d84 b001011 / 734 *
+    wp(Num(-3)), wp(Num(84)), wp(Num(11)), wp(Op(Add)),
+    wp(Op(Mul)), wp(Num(734)),
+  ]), Err(wp1(NotEnoughOperator)));
+
+  assert_eq!(evaluate(vec![ // mx3 d84 / *
+    wp(Num(-3)), wp(Num(84)), wp(Op(Add)), wp(Op(Mul)), 
+  ]), Err(wp1(NotEnoughOperand)));
+
+  assert_eq!(evaluate(vec![ // mx3 d84 b001011 / 734 *
+  ]), Err(wp1(EmptyExpr)));
+}
+
+#[test]
+fn test_eval_arithmatic_error() {
+  let wp = |x :LexKernel| WithPos {start:0, end1:0, val:x};
+  let wp1 = |x :ErrorKind| WithPos {start:0, end1:0, val:x};
+  assert_eq!(evaluate(vec![ // mx3 1 1 - /
+    wp(Num(-3)), wp(Num(1)), wp(Num(1)), wp(Op(Sub)), wp(Op(Div)),
+  ]), Err(wp1(DivisionByZero)));
+
+  assert_eq!(evaluate(vec![ // mx3 1 1 - /
+    wp(Num(-3)), wp(Num(4)), wp(Num(1)), wp(Op(Add)), wp(Op(Div)),
+  ]), Err(wp1(DivRem(-3,5))));
+}
+
 
 pub fn process_a_line(s :&str) -> Result<i64,Error> {
   let ls :Vec<_> =
@@ -286,4 +596,11 @@ pub fn process_a_line(s :&str) -> Result<i64,Error> {
   let rp = reverse_polish(ls)?;
 
   evaluate(rp)
+}
+
+
+#[test]
+fn test_integral() {
+  let s :&str = "(x00FF + 2 + mo1) / 2";
+  assert_eq!(process_a_line(s), Ok(128));
 }

@@ -1,4 +1,4 @@
-#![allow(dead_code, unused_mut, unused_variables)]
+#![allow(dead_code, unused_mut, unused_variables, unreachable_code)]
 
 mod expr;
 
@@ -44,10 +44,8 @@ fn print_error(s :&str, WithPos {start, end1, val:e} :Error) {
   };
 }
 
-fn main() {
-  let s :&str = "x00FF + 2 + mo1 / 2";
-  let s :&str = "(x00FF + 2 + mo1) / 2";
 
+fn main() {
   match std::env::args().nth(1) {
     None => println!("program needs at least 1 argument"),
     Some(s) if s == "-c" => {
