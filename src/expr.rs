@@ -76,6 +76,7 @@ fn error_at<U>(start :usize, end1 :usize, kind :ErrorKind)
 enum TokenKernel<'a> {
   Operator(&'a str),
   Number(bool, u32, &'a str), // (is_positive, radix, num)
+  Trailing(u32), // output radix + comment
   Parenthesis(bool), // is opening paren??
   Unknown,
 }
@@ -96,15 +97,18 @@ impl<'a> Iterator for Tokenizer<'a> {
   fn next(&mut self) -> Option<Self::Item> {
     lazy_static! {
       static ref RE_OP :Regex = Regex::new(r#"(?x) ^(
-        ! | @ | / | & | = | > | , | - | ~ | % | < | ; | `
+        ! | / | & | = | > | , | - | ~ | % | < | ; | ` |
         \# | \\ | \. | \+ | \* | \? | \| | \[ | \] | \{ | \} | \^ | \$
-        )+"#).unwrap();
+        )+"#).unwrap(); // excluding @ ( )
       static ref RE_NUM :Regex = Regex::new(r#"(?x) ^
         (m)?(b|o|d|x)?([0-9A-F]+)
       "#).unwrap();
       static ref RE_PRN :Regex = Regex::new(r#"^\(|\)"#).unwrap();
       static ref RE_SPS :Regex = Regex::new(r#"^\s*"#).unwrap();
-      //TODO static ref RE_CMT :Regex = Regex::new(r#
+      static ref RE_CMT :Regex = Regex::new(r#"(?x) ^
+        @(b|o|d|x)?(\s.*)?$
+      "#).unwrap();
+      // TODO what if multiline?
     }
 
     // skip white spaces
@@ -114,17 +118,19 @@ impl<'a> Iterator for Tokenizer<'a> {
     // starting position of this token
     let start = self.at;
 
+    let as_radix = |os| match os {
+      Some("b") => 2,
+      Some("o") => 8,
+      Some("d") => 10,
+      Some("x") => 16,
+      Some(_) => panic!(), // not possible
+      None => 10,
+    };
+
     let (len, val) =
     if let Some(cap) = RE_NUM.captures(&self.buf[self.at..]) {
       let sign = ! cap.get(1).is_some();
-      let radix = match cap.get(2).map(|m| m.as_str()) {
-        Some("b") => 2,
-        Some("o") => 8,
-        Some("d") => 10,
-        Some("x") => 16,
-        Some(_) => panic!(), // not possible
-        None => 10,
-      };
+      let radix = as_radix(cap.get(2).map(|m| m.as_str()));
       let digits = cap.get(3)?.as_str();
 
       let len = cap.get(0).unwrap().end();
@@ -133,6 +139,11 @@ impl<'a> Iterator for Tokenizer<'a> {
     } else if let Some(mat) = RE_OP.find(&self.buf[self.at..]) {
       let len = mat.end();
       (len, Operator(&self.buf[self.at..self.at+len]))
+
+    } else if let Some(cap) = RE_CMT.captures(&self.buf[self.at..]) {
+      let radix = as_radix(cap.get(1).map(|m| m.as_str()));
+      let len = cap.get(0).unwrap().end();
+      (len, Trailing(radix))
 
     } else if self.buf.get(self.at..=self.at) == Some("(") {
       (1, Parenthesis(true))
@@ -153,24 +164,30 @@ fn tokenize<'a>(buf :&'a str) -> Tokenizer<'a> {
 
 #[test]
 fn test_tokenizer_basic_parasing() {
-  let mut t = tokenize("  \t0 mx78AD+");
+  let mut t = tokenize("  \t0 mx78AD+ @ doitt!");
   assert_eq!(t.next().unwrap().val, Number(true, 10, "0"));
   assert_eq!(t.next().unwrap().val, Number(false, 16, "78AD"));
   assert_eq!(t.next().unwrap().val, Operator("+"));
+  assert_eq!(t.next().unwrap().val, Trailing(10));
+  assert_eq!(t.next(), None);
+  let mut t = tokenize("16@x");
+  assert_eq!(t.next().unwrap().val, Number(true, 10, "16"));
+  assert_eq!(t.next().unwrap().val, Trailing(16));
   assert_eq!(t.next(), None);
 }
 
 #[test]
 fn test_tokenizer_operator_exception() {
   let x :Option<u32> = None;
-  let mut t = tokenize("/(/1@+])^,$");
+  let mut t = tokenize("/(/1#+])^,$@x ha");
   assert_eq!(t.next().unwrap().val, Operator("/"));
   assert_eq!(t.next().unwrap().val, Parenthesis(true));
   assert_eq!(t.next().unwrap().val, Operator("/"));
   assert_eq!(t.next().unwrap().val, Number(true, 10, "1"));
-  assert_eq!(t.next().unwrap().val, Operator("@+]"));
+  assert_eq!(t.next().unwrap().val, Operator("#+]"));
   assert_eq!(t.next().unwrap().val, Parenthesis(false));
   assert_eq!(t.next().unwrap().val, Operator("^,$"));
+  assert_eq!(t.next().unwrap().val, Trailing(16));
   assert_eq!(t.next(), None);
 }
 
@@ -197,11 +214,48 @@ fn test_tokenizer_ignore_whitespaces() {
     tokenize("3  * 97- m3 // (* b077073 +++47 ___ xFFE").collect::<Vec<_>>());
 }
 
+fn test_tokeniner_trailing() {
+  let mut t = tokenize("10@");
+  assert_eq!(t.next().unwrap().val, Number(true, 10, "10"));
+  assert_eq!(t.next().unwrap().val, Trailing(10));
+  assert_eq!(t.next(), None);
+
+  let mut t = tokenize("10@  ");
+  assert_eq!(t.next().unwrap().val, Number(true, 10, "10"));
+  assert_eq!(t.next().unwrap().val, Trailing(10));
+  assert_eq!(t.next(), None);
+
+  let mut t = tokenize("10@  asdf");
+  assert_eq!(t.next().unwrap().val, Number(true, 10, "10"));
+  assert_eq!(t.next().unwrap().val, Trailing(10));
+  assert_eq!(t.next(), None);
+
+  let mut t = tokenize("10@b");
+  assert_eq!(t.next().unwrap().val, Number(true, 10, "10"));
+  assert_eq!(t.next().unwrap().val, Trailing(2));
+  assert_eq!(t.next(), None);
+
+  let mut t = tokenize("10@b  ");
+  assert_eq!(t.next().unwrap().val, Number(true, 10, "10"));
+  assert_eq!(t.next().unwrap().val, Trailing(2));
+  assert_eq!(t.next(), None);
+
+  let mut t = tokenize("10@b  asdf");
+  assert_eq!(t.next().unwrap().val, Number(true, 10, "10"));
+  assert_eq!(t.next().unwrap().val, Trailing(2));
+  assert_eq!(t.next(), None);
+
+  let mut t = tokenize("@");
+  assert_eq!(t.next().unwrap().val, Trailing(10));
+  assert_eq!(t.next(), None);
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum LexKernel {
   Op(Ops),
   Num(i64),
   Paren(bool),
+  Trail(u32),
 }
 use LexKernel::*;
 type Lex = WithPos<LexKernel>;
@@ -216,6 +270,7 @@ use std::cmp::Ordering;
 impl PartialOrd for LexKernel {
   fn partial_cmp(&self, other :&Self) -> Option<Ordering> {
     let order = |x :&LexKernel| match *x {
+      Trail(_) => panic!(), // TODO better ideas?
       Paren(_) => 0,
       Op(Add) => 3,
       Op(Sub) => 4,
@@ -242,6 +297,7 @@ fn lexer(tok :TokenKernel) -> Result<LexKernel,ErrorKind> {
         Err(_) => Err(InvalidNum),
       }
     },
+    TokenKernel::Trailing(r) => Ok(LexKernel::Trail(r)),
     TokenKernel::Parenthesis(b) => Ok(LexKernel::Paren(b)),
     TokenKernel::Unknown => Err(UnknownToken),
   }
@@ -287,7 +343,7 @@ fn reverse_polish(ls :Vec<Lex>)
       if ! stack.is_empty() { stack.pop(); }
       else { error(&wpl, UnpairedParenthesis)? }
     },
-    ref val => {
+    ref val => { // TODO shouldn't we check for invalidity?
       pop_while(&mut ret, &mut stack, |x| &x.val >= val);
       stack.push(wpl);
     },
@@ -519,7 +575,7 @@ fn evaluate(ls :Vec<Lex>) -> Result<i64,Error> {
 
       stack.push(ex(op)(a,b));
     },
-    _ => panic!(), // not possible
+    _ => panic!(), // not possible // TODO is this ok?
   }}
 
   match (stack.pop(), stack.pop()) {
@@ -588,19 +644,28 @@ fn test_eval_arithmatic_error() {
 }
 
 
-pub fn process_a_line(s :&str) -> Result<i64,Error> {
-  let ls :Vec<_> =
+fn extract_trail(ls :&mut Vec<Lex>) -> u32 {
+  match ls.last() {
+    Some(WithPos {val:Trail(r), ..}) =>
+    { let x = *r; ls.pop(); x },
+    _ => 10,
+  }
+}
+
+pub fn process_a_line(s :&str) -> Result<(i64,u32),Error> {
+  let mut ls :Vec<_> =
     tokenize(s).map(|wpt| wpt.map2(lexer))
     .collect::<Result<Vec<_>,_>>()?;
 
+  let out_radix = extract_trail(&mut ls);
   let rp = reverse_polish(ls)?;
 
-  evaluate(rp)
+  evaluate(rp).map(|ret| (ret, out_radix))
 }
 
 
 #[test]
 fn test_integral() {
   let s :&str = "(x00FF + 2 + mo1) / 2";
-  assert_eq!(process_a_line(s), Ok(128));
+  assert_eq!(process_a_line(s), Ok((128,10)));
 }

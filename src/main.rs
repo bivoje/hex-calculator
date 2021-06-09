@@ -24,7 +24,8 @@ fn print_error(s :&str, WithPos {start, end1, val:e} :Error) {
     // LexError
     UnknownOperator => print_errmsg_at(s, start, end,
       "unknown operator. currently supported operators are '+', '-', '*', '/'"),
-    UnknownToken => print_errmsg_at(s, start, end, "unknown token"),
+    UnknownToken => print_errmsg_at(s, start, end,
+      "unknown token starting with"),
     InvalidNum => print_errmsg_at(s, start, end,
       "invalid number representation"),
 
@@ -44,14 +45,25 @@ fn print_error(s :&str, WithPos {start, end1, val:e} :Error) {
   };
 }
 
+fn print_num(x :i64, radix :u32) {
+  match radix {
+    2  => println!("b{:b}", x),
+    8  => println!("o{:o}", x),
+    10 => println!("{}"   , x),
+    16 => println!("x{:X}", x),
+    _ => panic!("{}", radix),
+  }
+}
 
 fn main() {
   match std::env::args().nth(1) {
     None => println!("program needs at least 1 argument"),
     Some(s) if s == "-c" => {
-      let s :String = std::env::args().skip(2).collect();
+      //let s :String = std::env::args().skip(2).collect();
+      let ss :Vec<String> = std::env::args().skip(2).collect();
+      let s = ss.join(" "); // TODO use itertools::intersperse?
       match expr::process_a_line(&s) {
-        Ok(x) => println!("{}", x),
+        Ok((x,r)) => print_num(x,r),
         Err(e) => print_error(&s, e),
       };
     },
@@ -64,7 +76,7 @@ fn main() {
         if succ.ok() == Some(0) { println!(""); break; } // at EOF, ctrl-D
 
         match expr::process_a_line(&s) {
-          Ok(x) => println!("{}", x),
+          Ok((x,r)) => print_num(x,r),
           Err(e) if e.val == EmptyExpr => println!("empty {:?} {:?}", e, s),
           Err(e) => print_error(&s[0..s.len()-1], e), // trim newline
         };
