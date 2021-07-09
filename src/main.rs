@@ -55,21 +55,13 @@ fn print_num(x :i64, radix :u32) {
   }
 }
 
+use std::io::Write; // to use flush
+
 fn main() {
   match std::env::args().nth(1) {
-    None => println!("program needs at least 1 argument"),
-    Some(s) if s == "-c" => {
-      //let s :String = std::env::args().skip(2).collect();
-      let ss :Vec<String> = std::env::args().skip(2).collect();
-      let s = ss.join(" "); // TODO use itertools::intersperse?
-      match expr::process_a_line(&s) {
-        Ok((x,r)) => print_num(x,r),
-        Err(e) => print_error(&s, e),
-      };
-    },
     Some(s) if s == "-i" => {
       loop {
-        print!("> ");
+        print!("> "); std::io::stdout().flush().unwrap();
         let mut s = String::new();
         let succ = std::io::stdin().read_line(&mut s);
         if succ.is_err() { println!("io error: {:?}", succ); break; } 
@@ -77,11 +69,19 @@ fn main() {
 
         match expr::process_a_line(&s) {
           Ok((x,r)) => print_num(x,r),
-          Err(e) if e.val == EmptyExpr => println!("empty {:?} {:?}", e, s),
+          Err(e) if e.val == EmptyExpr => (),
           Err(e) => print_error(&s[0..s.len()-1], e), // trim newline
         };
       }
     },
-    Some(s) => println!("unrecognized option {}",  s),
+    _ => {
+      //let s :String = std::env::args().skip(1).collect();
+      let ss :Vec<String> = std::env::args().skip(1).collect();
+      let s = ss.join(" "); // TODO use itertools::intersperse?
+      match expr::process_a_line(&s) {
+        Ok((x,r)) => print_num(x,r),
+        Err(e) => print_error(&s, e),
+      };
+    },
   };
 }
