@@ -64,7 +64,7 @@ fn main() {
         print!("> "); std::io::stdout().flush().unwrap();
         let mut s = String::new();
         let succ = std::io::stdin().read_line(&mut s);
-        if succ.is_err() { println!("io error: {:?}", succ); break; } 
+        if succ.is_err() { println!("io error: {:?}", succ); break; }
         if succ.ok() == Some(0) { println!(""); break; } // at EOF, ctrl-D
 
         match expr::process_a_line(&s) {

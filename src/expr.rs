@@ -46,7 +46,7 @@ pub enum ErrorKind {
   InvalidNum,
 
   // EvalError
-  DivisionByZero, 
+  DivisionByZero,
   DivRem(i64, i64),
 
   // Malformed Expression
@@ -105,11 +105,11 @@ impl<'a> Iterator for Tokenizer<'a> {
       "#).unwrap();
       static ref RE_PRN :Regex = Regex::new(r#"^\(|\)"#).unwrap();
       static ref RE_SPS :Regex = Regex::new(r#"^\s*"#).unwrap();
-      static ref RE_CMT :Regex = Regex::new(r#"(?x) ^
+      static ref RE_CMT :Regex = Regex::new(r#"(?xs) ^
         @(b|o|d|x)?(\s.*)?$
       "#).unwrap();
       // TODO what if multiline?
-    }
+    } // TODO make a token smaller
 
     // skip white spaces
     self.at += RE_SPS.find(&self.buf[self.at..]).unwrap().end();
@@ -246,6 +246,13 @@ fn test_tokeniner_trailing() {
   assert_eq!(t.next(), None);
 
   let mut t = tokenize("@");
+  assert_eq!(t.next().unwrap().val, Trailing(10));
+  assert_eq!(t.next(), None);
+
+  let mut t = tokenize("b1010 + o75 @ comment is ignored");
+  assert_eq!(t.next().unwrap().val, Number(true, 2, "1010"));
+  assert_eq!(t.next().unwrap().val, Number(true, 8, "75"));
+  assert_eq!(t.next().unwrap().val, Operator("+"));
   assert_eq!(t.next().unwrap().val, Trailing(10));
   assert_eq!(t.next(), None);
 }
@@ -623,7 +630,7 @@ fn test_eval_malformed_expr() {
   ]), Err(wp1(NotEnoughOperator)));
 
   assert_eq!(evaluate(vec![ // mx3 d84 / *
-    wp(Num(-3)), wp(Num(84)), wp(Op(Add)), wp(Op(Mul)), 
+    wp(Num(-3)), wp(Num(84)), wp(Op(Add)), wp(Op(Mul)),
   ]), Err(wp1(NotEnoughOperand)));
 
   assert_eq!(evaluate(vec![ // mx3 d84 b001011 / 734 *
