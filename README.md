@@ -79,14 +79,17 @@ Use round brackets `(`, `)` as in normal arithmetic to override operator precede
 @(b|o|d|x)?(\s.*)?$
 ```
 `@` plays a double role in `hc` expression. It starts comment and may indicate in which radix to print the result.
-e.g. `
+
+e.g. `1+2 @ blabla`: calculate `1+2`, `blabla` is a comment, print result in decimal (default) form.
+
+e.g. `1+2 @b blabla` :calculate `1+2`, `blabla` is a comment, print result in binary form.
 
 ##### comment
 
 ```regex
 @(\s.*)?$
 ```
-`@` comment acts similar to `#` comment of shell script or `//` comment of C language. But remember to put more than one whitespace before comment text begins. A non-space character right after `@` holds [special semantic](#####result-radix).
+`@` comment acts similar to `#` comment of shell script or `//` comment of C language. But remember to put more than one whitespace before comment text begins. A non-space character right after `@` holds [special semantic](#result-radix).
 
 ##### result radix
 
@@ -94,6 +97,7 @@ e.g. `
 @(b|o|d|x)?
 ```
 Put one of the radix indicator (`b`, `o`, `d`, `x`) right after `@` character.
+The result of evaluation will be formatted with the radix base.
 
 
 ## How to use
@@ -139,3 +143,4 @@ Quit by pressing `Ctrl-D`
 - negative result handling in radix other than decimal
 - ignore empty expr in interactive mode
 - current implementation of token is too big, need to demerge it into smaller pieces.
+- can we deal with floating point numbers?
